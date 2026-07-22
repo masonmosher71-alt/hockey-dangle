@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Dangle Cam</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #0a0e14; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    touch-action: none;
+  }
+  #stage {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+  }
+  video {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  video.mirror {
+    transform: scaleX(-1);
+  }
+  .flipBtn {
+    pointer-events: auto; background: rgba(10,14,20,0.55);
+    border: 1px solid rgba(255,255,255,0.2); color: #fff;
+    border-radius: 999px; width: 44px; height: 44px; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    color: #fff; padding: 24px; box-sizing: border-box;
+    background: rgba(10,14,20,0.55); backdrop-filter: blur(2px);
+    pointer-events: none;
+  }
+  .card {
+    background: rgba(20,26,36,0.9); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 18px; padding: 22px 20px; max-width: 340px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    pointer-events: auto;
+  }
+  h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: 0.3px; }
+  p { font-size: 14px; line-height: 1.4; color: #b9c2cf; margin: 8px 0; }
+  .btn {
+    display: inline-block; margin-top: 14px; padding: 13px 26px;
+    border-radius: 12px; border: none; font-size: 16px; font-weight: 600;
+    background: linear-gradient(135deg, #33d17a, #17a865); color: #06170e;
+    box-shadow: 0 4px 14px rgba(51,209,122,0.35);
+  }
+  .btn.secondary {
+    background: rgba(255,255,255,0.1); color: #fff; box-shadow: none;
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+  .swatch {
+    width: 46px; height: 46px; border-radius: 10px; margin: 12px auto;
+    border: 2px solid rgba(255,255,255,0.4);
+  }
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: calc(12px + env(safe-area-inset-top)) 16px 0;
+    pointer-events: none; z-index: 5;
+  }
+  .pill {
+    background: rgba(10,14,20,0.55); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 999px; padding: 8px 16px; color: #fff; font-weight: 700;
+    font-size: 15px; letter-spacing: 0.3px;
+  }
+  .crosshair-hint {
+    position: absolute; width: 64px; height: 64px; border: 3px solid #ffd23f;
+    border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none;
+  }
+  .hidden { display: none !important; }
+  .flash { animation: flash 0.4s ease; }
+  @keyframes flash { 0% { background: rgba(255,72,72,0.5);} 100% { background: transparent; } }
+  #calScreen {
+    justify-content: flex-end;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  select {
+    font-size: 15px; padding: 8px 10px; border-radius: 8px; margin-top: 6px;
+    background: #1a2230; color: #fff; border: 1px solid rgba(255,255,255,0.2);
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas"></canvas>
+
+  <div class="hud">
+    <div class="pill">Score: <span id="scoreVal">0</span></div>
+    <button class="flipBtn" id="flipBtn" title="Flip camera">🔄</button>
+    <div class="pill">Best: <span id="bestVal">0</span></div>
+  </div>
+
+  <!-- Start / permission screen -->
+  <div class="overlay" id="startScreen">
+    <div class="card">
+      <h1>🏒 Dangle Cam</h1>
+      <p>Use your phone camera to track a brightly-taped puck. Stickhandle it through the gates as they close in — hit the barrier and it's game over.</p>
+      <p>Prop your phone up facing your stickhandling area, tape included, and tap Start.</p>
+      <button class="btn" id="startBtn">Start Camera</button>
+    </div>
+  </div>
+
+  <!-- Calibration screen -->
+  <div class="overlay hidden" id="calScreen">
+    <div class="card">
+      <h1>Tap Your Puck</h1>
+      <p>Hold the taped puck in view, then tap directly on the tape in the video below.</p>
+      <div class="swatch" id="swatchPreview" style="background:#222;"></div>
+      <p id="calStatus">No color selected yet</p>
+      <button class="btn hidden" id="confirmCalBtn">Looks Good — Play</button>
+      <br>
+      <button class="btn secondary" id="retryCalBtn" style="margin-top:10px;">Retry Tap</button>
+    </div>
+  </div>
+
+  <!-- Game over screen -->
+  <div class="overlay hidden" id="gameOverScreen">
+    <div class="card">
+      <h1>💥 Game Over</h1>
+      <p>You hit the barrier.</p>
+      <p style="font-size:28px; font-weight:800; color:#33d17a;" id="finalScore">0</p>
+      <p>points</p>
+      <button class="btn" id="retryBtn">Play Again</button>
+      <br>
+      <button class="btn secondary" id="recalBtn" style="margin-top:10px;">Recalibrate Color</button>
+    </div>
+  </div>
+
+  <!-- Difficulty picker (shown briefly before each run) -->
+  <div class="overlay hidden" id="diffScreen">
+    <div class="card">
+      <h1>Choose Difficulty</h1>
+      <p>Gap width and closing speed scale up as you score.</p>
+      <select id="diffSelect">
+        <option value="easy">Easy — wide gaps</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard — narrow, fast</option>
+      </select>
+      <br>
+      <button class="btn" id="beginBtn">Begin</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  const startScreen = document.getElementById('startScreen');
+  const calScreen = document.getElementById('calScreen');
+  const gameOverScreen = document.getElementById('gameOverScreen');
+  const diffScreen = document.getElementById('diffScreen');
+  const startBtn = document.getElementById('startBtn');
+  const confirmCalBtn = document.getElementById('confirmCalBtn');
+  const retryCalBtn = document.getElementById('retryCalBtn');
+  const retryBtn = document.getElementById('retryBtn');
+  const recalBtn = document.getElementById('recalBtn');
+  const beginBtn = document.getElementById('beginBtn');
+  const swatchPreview = document.getElementById('swatchPreview');
+  const calStatus = document.getElementById('calStatus');
+  const scoreVal = document.getElementById('scoreVal');
+  const bestVal = document.getElementById('bestVal');
+  const finalScore = document.getElementById('finalScore');
+  const diffSelect = document.getElementById('diffSelect');
+  const flipBtn = document.getElementById('flipBtn');
+
+  let targetColor = null; // {r,g,b}
+  let targetHsv = null; // {h,s,v}
+  let currentStream = null;
+  let facingMode = 'environment'; // 'environment' = back, 'user' = front
+  let best = 0;
+  let W = 0, H = 0;
+  let sampleCanvas = document.createElement('canvas');
+  let sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  const SAMPLE_W = 160, SAMPLE_H = 120;
+  sampleCanvas.width = SAMPLE_W;
+  sampleCanvas.height = SAMPLE_H;
+
+  let puckX = 0.5; // normalized 0..1, smoothed
+  let puckFound = false;
+
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * devicePixelRatio;
+    canvas.height = H * devicePixelRatio;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+
+  async function openStream(mode) {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+    }
+    currentStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    video.classList.toggle('mirror', mode === 'user');
+    resize();
+  }
+
+  async function startCamera() {
+    try {
+      await openStream(facingMode);
+      startScreen.classList.add('hidden');
+      calScreen.classList.remove('hidden');
+    } catch (err) {
+      alert('Could not access camera: ' + err.message + '\n\nMake sure this page is loaded over HTTPS and camera permission is allowed in Safari settings.');
+    }
+  }
+
+  flipBtn.addEventListener('click', async () => {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    try {
+      await openStream(facingMode);
+    } catch (err) {
+      alert('Could not switch camera: ' + err.message);
+      facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    }
+  });
+
+  // --- Calibration: tap on video to sample color ---
+  video.addEventListener('click', onCalibTap);
+  video.addEventListener('touchstart', function(e) {
+    if (calScreen.classList.contains('hidden')) return;
+    const t = e.touches[0];
+    onCalibTap({ clientX: t.clientX, clientY: t.clientY });
+    e.preventDefault();
+  }, { passive: false });
+
+  function onCalibTap(e) {
+    if (calScreen.classList.contains('hidden')) return;
+    const rect = video.getBoundingClientRect();
+    // front camera is mirrored on screen, so flip x to match the raw frame
+    const rawRatio = (e.clientX - rect.left) / rect.width;
+    const xRatio = facingMode === 'user' ? 1 - rawRatio : rawRatio;
+    const yRatio = (e.clientY - rect.top) / rect.height;
+
+    sampleCtx.drawImage(video, 0, 0, SAMPLE_W, SAMPLE_H);
+    const sx = Math.round(xRatio * SAMPLE_W);
+    const sy = Math.round(yRatio * SAMPLE_H);
+    const size = 6;
+    const data = sampleCtx.getImageData(
+      Math.max(0, sx - size/2), Math.max(0, sy - size/2), size, size
+    ).data;
+
+    let r=0,g=0,b=0,n=0;
+    for (let i=0; i<data.length; i+=4) {
+      r += data[i]; g += data[i+1]; b += data[i+2]; n++;
+    }
+    r = Math.round(r/n); g = Math.round(g/n); b = Math.round(b/n);
+    targetColor = { r, g, b };
+    targetHsv = rgbToHsv(r, g, b);
+    swatchPreview.style.background = `rgb(${r},${g},${b})`;
+    calStatus.textContent = `Sampled color: rgb(${r}, ${g}, ${b})`;
+    confirmCalBtn.classList.remove('hidden');
+  }
+
+  confirmCalBtn.addEventListener('click', () => {
+    calScreen.classList.add('hidden');
+    diffScreen.classList.remove('hidden');
+  });
+  retryCalBtn.addEventListener('click', () => {
+    targetColor = null;
+    targetHsv = null;
+    confirmCalBtn.classList.add('hidden');
+    calStatus.textContent = 'No color selected yet';
+    swatchPreview.style.background = '#222';
+  });
+  recalBtn.addEventListener('click', () => {
+    gameOverScreen.classList.add('hidden');
+    calScreen.classList.remove('hidden');
+    targetColor = null;
+    targetHsv = null;
+    confirmCalBtn.classList.add('hidden');
+    calStatus.textContent = 'No color selected yet';
+    swatchPreview.style.background = '#222';
+  });
+
+  // --- Color helpers ---
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : d / max;
+    const v = max;
+    return { h, s, v };
+  }
+  function hueDist(h1, h2) {
+    const d = Math.abs(h1 - h2);
+    return Math.min(d, 360 - d);
+  }
+
+  // --- Puck tracking each frame ---
+  // Uses hue/saturation matching (robust to lighting changes) plus a
+  // weighted centroid so the strongest, most concentrated match wins
+  // over scattered false positives.
+  function trackPuck() {
+    if (!targetHsv) return;
+    sampleCtx.drawImage(video, 0, 0, SAMPLE_W, SAMPLE_H);
+    const frame = sampleCtx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
+
+    const HUE_TOL = 28;       // degrees of hue tolerance
+    const MIN_SAT = Math.max(0.25, targetHsv.s - 0.35); // require some saturation
+    const MIN_VAL = 0.2;      // ignore near-black pixels
+
+    let sumX = 0, sumW = 0, count = 0;
+
+    for (let y = 0; y < SAMPLE_H; y += 1) {
+      for (let x = 0; x < SAMPLE_W; x += 1) {
+        const idx = (y * SAMPLE_W + x) * 4;
+        const hsv = rgbToHsv(frame[idx], frame[idx+1], frame[idx+2]);
+        if (hsv.s < MIN_SAT || hsv.v < MIN_VAL) continue;
+        const hd = hueDist(hsv.h, targetHsv.h);
+        if (hd < HUE_TOL) {
+          const w = 1 - hd / HUE_TOL; // closer hue match = more weight
+          sumX += x * w;
+          sumW += w;
+          count++;
+        }
+      }
+    }
+
+    if (count > 10 && sumW > 0) {
+      const rawX = sumX / sumW / SAMPLE_W; // 0..1 in raw (unmirrored) frame
+      const targetX = facingMode === 'user' ? 1 - rawX : rawX; // match display mirroring
+      puckX += (targetX - puckX) * 0.55; // smoothing (higher = snappier)
+      puckFound = true;
+    } else {
+      puckFound = false;
+    }
+  }
+
+  // --- Game state ---
+  let gameRunning = false;
+  let score = 0;
+  let obstacles = []; // {y (0..1 progress), gapCenter (0..1), gapWidth (0..1), scored}
+  let spawnTimer = 0;
+  let speed = 0.006; // progress per frame
+  let gapWidth = 0.32;
+  let difficulty = 'normal';
+  const HIT_LINE = 0.82; // fraction of screen height where collision is judged
+
+  function configDifficulty(level) {
+    difficulty = level;
+    if (level === 'easy') { speed = 0.0045; gapWidth = 0.40; }
+    if (level === 'normal') { speed = 0.006; gapWidth = 0.32; }
+    if (level === 'hard') { speed = 0.0085; gapWidth = 0.24; }
+  }
+
+  beginBtn.addEventListener('click', () => {
+    configDifficulty(diffSelect.value);
+    diffScreen.classList.add('hidden');
+    resetGame();
+    gameRunning = true;
+  });
+
+  retryBtn.addEventListener('click', () => {
+    gameOverScreen.classList.add('hidden');
+    diffScreen.classList.remove('hidden');
+  });
+
+  function resetGame() {
+    score = 0;
+    obstacles = [];
+    spawnTimer = 0;
+    scoreVal.textContent = '0';
+    puckFound = false;
+  }
+
+  function spawnObstacle() {
+    const margin = gapWidth / 2 + 0.06;
+    const gapCenter = margin + Math.random() * (1 - margin * 2);
+    obstacles.push({ y: -0.05, gapCenter, gapWidth, scored: false });
+  }
+
+  function endGame() {
+    gameRunning = false;
+    if (score > best) { best = score; bestVal.textContent = best; }
+    finalScore.textContent = score;
+    gameOverScreen.classList.remove('hidden');
+    document.getElementById('stage').classList.add('flash');
+    setTimeout(() => document.getElementById('stage').classList.remove('flash'), 400);
+  }
+
+  function updateGame() {
+    if (!gameRunning) return;
+
+    // increase difficulty gradually with score
+    const speedBoost = speed + Math.min(score * 0.00025, 0.006);
+
+    spawnTimer -= speedBoost;
+    if (spawnTimer <= 0) {
+      spawnObstacle();
+      spawnTimer = 1; // spawn roughly once per "cycle"
+    }
+
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const ob = obstacles[i];
+      ob.y += speedBoost;
+
+      // Check collision as obstacle crosses the hit line
+      if (!ob.scored && ob.y >= HIT_LINE) {
+        ob.scored = true;
+        const halfGap = ob.gapWidth / 2;
+        const inGap = puckFound && Math.abs(puckX - ob.gapCenter) < halfGap;
+        if (inGap) {
+          score++;
+          scoreVal.textContent = score;
+        } else {
+          endGame();
+        }
+      }
+
+      if (ob.y > 1.15) {
+        obstacles.splice(i, 1);
+      }
+    }
+  }
+
+  // --- Rendering ---
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // hit line indicator
+    const hitY = H * HIT_LINE;
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.setLineDash([8, 10]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, hitY);
+    ctx.lineTo(W, hitY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // obstacles as barriers with a gap
+    obstacles.forEach(ob => {
+      const y = ob.y * H;
+      const barH = 26;
+      const gapCenterPx = ob.gapCenter * W;
+      const halfGapPx = (ob.gapWidth / 2) * W;
+
+      ctx.fillStyle = ob.scored ? 'rgba(51,209,122,0.55)' : 'rgba(255,90,90,0.85)';
+      // left segment
+      ctx.fillRect(0, y - barH/2, Math.max(0, gapCenterPx - halfGapPx), barH);
+      // right segment
+      const rightStart = gapCenterPx + halfGapPx;
+      ctx.fillRect(rightStart, y - barH/2, Math.max(0, W - rightStart), barH);
+
+      // gap edges glow
+      ctx.fillStyle = 'rgba(255,210,63,0.9)';
+      ctx.fillRect(gapCenterPx - halfGapPx - 3, y - barH/2, 3, barH);
+      ctx.fillRect(gapCenterPx + halfGapPx, y - barH/2, 3, barH);
+    });
+
+    // puck marker
+    if (puckFound) {
+      const px = puckX * W;
+      const py = hitY;
+      ctx.beginPath();
+      ctx.arc(px, py, 14, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,210,63,0.9)';
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    } else if (gameRunning) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '600 14px -apple-system';
+      ctx.textAlign = 'center';
+      ctx.fillText('Puck not detected — bring it into frame', W/2, 40);
+    }
+  }
+
+  function loop() {
+    trackPuck();
+    updateGame();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', startCamera);
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
